@@ -77,7 +77,7 @@ Installation python package include `opencv` and `opendr`.
    $ conda activate smpl
    $ pip install -r ./requirements.txt
    ```
-   And follow above [Installation Opendr](#installation-'opendr'-for-python3)
+   And follow above [Installation Opendr](#installation-opendr-for-python3)
 
 3. Get LSP data  
 Original LSP dataset [Link](http://www.comp.leeds.ac.uk/mat4saj/lsp_dataset.zip) does not work.
