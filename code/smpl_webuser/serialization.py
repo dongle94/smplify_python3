@@ -23,12 +23,15 @@ Modules included:
 __all__ = ['load_model', 'save_model']
 
 import numpy as np
-import cPickle as pickle
+# import cPickle as pickle
+# import _pickle as pickle
+import pickle
 import chumpy as ch
 from chumpy.ch import MatVecMult
-from posemapper import posemap
-from verts import verts_core
-    
+from .posemapper import posemap
+from .verts import verts_core
+
+
 def save_model(model, fname):
     m0 = model
     trainer_dict = {'v_template': np.asarray(m0.v_template),'J': np.asarray(m0.J),'weights': np.asarray(m0.weights),'kintree_table': m0.kintree_table,'f': m0.f, 'bs_type': m0.bs_type, 'posedirs': np.asarray(m0.posedirs)}    
@@ -73,11 +76,14 @@ def backwards_compatibility_replacements(dd):
         dd['bs_style'] = 'lbs'
 
 
-
 def ready_arguments(fname_or_dict):
 
     if not isinstance(fname_or_dict, dict):
-        dd = pickle.load(open(fname_or_dict))
+        with open(fname_or_dict, 'rb') as f:
+            u = pickle._Unpickler(f)
+            u.encoding = 'latin1'
+            dd = u.load()
+        # dd = pickle.load()
     else:
         dd = fname_or_dict
         
@@ -109,7 +115,6 @@ def ready_arguments(fname_or_dict):
         dd['v_posed'] = dd['v_template'] + dd['posedirs'].dot(posemap(dd['bs_type'])(dd['pose']))
             
     return dd
-
 
 
 def load_model(fname_or_dict):

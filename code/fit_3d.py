@@ -15,7 +15,8 @@ See README to see how to download images and the detected joints.
 from os.path import join, exists, abspath, dirname
 from os import makedirs
 import logging
-import cPickle as pickle
+#import cPickle as pickle
+import pickle
 from time import time
 from glob import glob
 import argparse
@@ -214,7 +215,7 @@ def optimize_on_joints(j2d,
     t0 = time()
     # define the mapping LSP joints -> SMPL joints
     # cids are joints ids for LSP:
-    cids = range(12) + [13]
+    cids = list(range(12)) + [13]
     # joint ids for SMPL
     # SMPL does not have a joint for head, instead we use a vertex for the head
     # and append it later.
@@ -509,13 +510,11 @@ def main(base_dir,
     :param viz: boolean, if True enables visualization during optimization
     """
 
-    img_dir = join(abspath(base_dir), 'images/')
-    print img_dir
+    img_dir = join(abspath(base_dir), 'images/lsp')
     data_dir = join(abspath(base_dir), 'results/lsp')
 
     if not exists(out_dir):
         makedirs(out_dir)
-        _LOGGER.info("make out dir")
 
     # Render degrees: List of degrees in azimuth to render the final fit.
     # Note that rendering many views can take a while.
@@ -593,9 +592,9 @@ def main(base_dir,
                         plt.draw()
                         plt.title('%d deg' % deg)
                         plt.pause(1)
-                raw_input('Press any key to continue...')
+                # raw_input('Press any key to continue...')
 
-            with open(out_path, 'w') as outf:
+            with open(out_path, 'wb') as outf:
                 pickle.dump(params, outf)
 
             # This only saves the first rendering.
