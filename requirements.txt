@@ -1,5 +1,6 @@
 numpy>=1.11.0
 scipy>=0.17.1
 chumpy
-opendr
+# opendr
 matplotlib
+opencv-python

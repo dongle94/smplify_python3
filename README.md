@@ -1,5 +1,8 @@
-Code, data and results for Keep it SMPL: Automatic Estimation of 3D Human Pose and Shape from a Single Image
-==========
+I modified original repo(https://github.com/githubcrj/simplify) to work in python3.
+A lot of things have changed a little bit, from installation to script testing. 
+
+
+# Code, data and results for Keep it SMPL: Automatic Estimation of 3D Human Pose and Shape from a Single Image
 We supply an implementation of our paper in `fit_3d.py` and a set of example scripts to visualize the results of our experiments.
 
 To try out the demo on LSP images, follow the directions in "Getting Started".
@@ -26,9 +29,12 @@ Please cite the paper if this code was helpful to your research:
 }
 ```
 
-System Requirements:
-====================
+## System Requirements
+
 Operating system: OSX, Linux
+
+- Python 3.x
+  - I test this project in python 3.8.x
 
 Python Dependencies:
 
@@ -37,76 +43,81 @@ Python Dependencies:
 - [OpenCV](http://opencv.org/downloads.html)
 - [OpenDR](https://github.com/mattloper/opendr)
 - [SMPL](http://smpl.is.tue.mpg.de)   
+
 Note that installing SMPL requires registration and manual download on the SMPL website.
 
-Getting Started:
-================
 
-1. Extract the code:
---------------------
-Extract the `mpips-smplify_public.zip` file to your home directory (or any other location you wish). 
-This creates a directory `smplify_public/` which contains this README (plus a txt file used below to install dependencies) and the `code/` directory.
+## Installation `Opendr` for python3
+If you want to install `opendr` in python3, you should edit some code in `opendr` follow below.
+`opendr`'s version doesn't matter.
 
-
-2. Get LSP data:
---------------------
-a. Get the images  
-Download images from the [LSP dataset](http://www.comp.leeds.ac.uk/mat4saj/lsp_dataset.zip).   
-Make sure to download the cropped & scaled dataset, not the original scale images.  
-Unzip this directory to any location you like.
-
-b. Get the Deepcut detected joints  
-Download `lsp_results.tar.gz` from our [website](http://smplify.is.tue.mpg.de). 
-Extract this in the `smplify_public/` directory. This creates the `smplify_public/results` directory.
-
-c. Create a symbolic link to LSP images  
-Open a terminal window and type:
 ```
-cd ${smplify_public/}
-mkdir images
-ln -s ${PATH_TO_LSP_DATASET_FOLDER}/images/ images/lsp
+$ pip download --no-deps opendr==0.78
+$ tar zxvf opendr-0.78.tar.gz
+$ cd opendr-0.78
+$ sed -i 's/from _constants import/from opendr.contexts._constants import/g' ./opendr/contexts/ctx_base.pyx 
+$ python setup.py install
 ```
 
-3. Install dependencies:
---------------------
-We recommend using [virtualenv](http://docs.python-guide.org/en/latest/dev/virtualenvs/) to manage the python packages.  
-To install virtualenv In Linux:  
-`sudo apt-get install python-pip python-virtualenv`
 
-To install virtualenv in OSX:  
-`sudo pip install virtualenv`
+## Getting Started
+Currently, what is possible is a demo run on the LSP dataset.
 
-Step 1. Setup your virtualenv:  
-In `smplify_public/` or wherever you wish, do:  
-`virtualenv --system-site-packages venv`   
-where `venv` is the name of the virtualenv.
+1. Clone the code   
+Clone the repo in your local environments.
+   ```shell
+   $ git clone https://github.com/dongle94/smplify_python3.git 
+   ```
 
-Step 2. To enter the virtualenv, type:  
-`. ${PATH_TO_venv}/bin/activate`
+2. Create envs and install dependencies  
+You should use `conda` envs. I test this project python version `3.8`.
+Installation python package include `opencv` and `opendr`. 
+   ```shell
+   $ conda create -n smpl python==3.8.18
+   $ conda activate smpl
+   $ pip install -r ./requirements.txt
+   ```
+   And follow above [Installation Opendr](#installation-'opendr'-for-python3)
 
-Step 3. Install the packages
-```
-pip install -U pip
-cd ${smplify_public/}
-pip install -r requirements.txt
-```
+3. Get LSP data  
+Original LSP dataset [Link](http://www.comp.leeds.ac.uk/mat4saj/lsp_dataset.zip) does not work.
+So these original repo has LSP Images. But I modified data directory structure.
+So you can skip step 3.1. below.
 
-Step 4. OpenCV and SMPL require a different installation procedure. Please follow the procedure described on the corresponding websites.
+   1. Get the images  
+   Download images from the [LSP dataset](http://www.comp.leeds.ac.uk/mat4saj/lsp_dataset.zip).   
+   Make sure to download the cropped & scaled dataset, not the original scale images.  
+   Unzip this directory to any location you like.
 
-4. Symlink female/male SMPL models from the SMPL package:
---------------------
-From `smplify_public/`, do:  
-`ln -s ${ABSOLUTE_PATH_WHERE_YOU_UNZIPPED_SMPL}/smpl/models/*.pkl code/models/`
+   2. Get the Deepcut detected joints  
+   Download `lsp_results.tar.gz` from our [website](http://smplify.is.tue.mpg.de). 
+   Extract this in the `{REPO_HOME}/` directory. Maby this creates the `smplify_python3/results/lsp/...` directory.
 
-5. Run fit_3d.py:
---------------------
-In a new terminal window, navigate to the `smplify_public/code/` directory.
-You can run the demo script now by typing the following (make sure you are inside the venv):
+4. Include female/male SMPL models from the SMPL package  
+You should download [`SMPL`](https://smpl.is.tue.mpg.de/) python version 1.0.0.
+But I already include that models female/male(gender-specific model) model pickle(`.pkl`) in `./code/models`.
+   ```
+   ./code
+   ├── lib
+   ├── ...
+   └── models
+       ├── basicModel_f_lbs_10_207_0_v1.0.0.pkl
+       ├── basicmodel_m_lbs_10_207_0_v1.0.0.pkl
+       ├── basicModel_neutral_lbs_10_207_0_v1.0.0.pkl
+       ├── gmm_08.pkl
+       ├── regressors_locked_normalized_female.npz
+       ├── regressors_locked_normalized_hybrid.npz
+       └── regressors_locked_normalized_male.npz
+   ```
 
-`python fit_3d.py ${smplify_public/} --viz`   
-(or `python fit_3d.py ../ --viz`)
+5. Run fit_3d.py  
+You can run the demo script now by typing the following
+   ```shell
+   # PYTHONAPTH=./ python ./code/fit_3d.py {base_dir} {out-dir} {--gender-neutral} {--viz}
+   $ PYTHONAPTH=./ python ./code/fit_3d.py ./ --out-dir=./out --viz
+   ```
 
-The script fits the model to LSP data, saving the results in `/tmp/smplify_lsp` (an alternative output folder can be set by passing the argument via command line).
+   The script fits the model to LSP data, saving the results in `./out/`.
 
 Folder structure
 ==========
@@ -131,22 +142,22 @@ For HEva/H36M: N = number of frames in the sequence.
 
 The 14 DeepCut joints correspond to:
 
-|index     |  joint name      |    corresponding SMPL joint ids   |
-|----------|:----------------:|---- -----------------------------:|
-| 0        |  Right ankle     |8                                  |
-| 1        |  Right knee      |5                                  |
-| 2        |  Right hip       |2                                  |
-| 3        |  Left hip        |1                                  |
-| 4        |  Left knee       |4                                  |
-| 5        |  Left ankle      |7                                  |
-| 6        |  Right wrist     |21                                 |
-| 7        |  Right elbow     |19                                 |
-| 8        |  Right shoulder  |17                                 |
-| 9        |  Left shoulder   |16                                 |
-| 10       |  Left elbow      |18                                 |
-| 11       |  Left wrist      |20                                 |
-| 12       |  Neck            |-                                  |
-| 13       |  Head top        |vertex 411 (see line 233:fit_3d.py)|
+|index     |  joint name      |    corresponding SMPL joint ids  |
+|----------|:----------------:|---------------------------------:|
+| 0        |  Right ankle     |8                                 |
+| 1        |  Right knee      |5                                 |
+| 2        |  Right hip       |2                                 |
+| 3        |  Left hip        |1                                 |
+| 4        |  Left knee       |4                                 |
+| 5        |  Left ankle      |7                                 |
+| 6        |  Right wrist     |21                                |
+| 7        |  Right elbow     |19                                |
+| 8        |  Right shoulder  |17                                |
+| 9        |  Left shoulder   |16                                |
+| 10       |  Left elbow      |18                                |
+| 11       |  Left wrist      |20                                |
+| 12       |  Neck            |-                                 |
+| 13       |  Head top        |vertex 411 (see line 233:fit_3d.py) |
 
 SMPL does not have a joint corresponding to the head top so we picked an
 appropriate vertex as the corresponding point for the head.
