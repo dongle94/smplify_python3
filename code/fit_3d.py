@@ -12,8 +12,8 @@ The code is organized to be run on the LSP dataset.
 See README to see how to download images and the detected joints.
 """
 
-from os.path import join, exists, abspath, dirname
-from os import makedirs
+import os
+from os.path import join, abspath, dirname
 import logging
 #import cPickle as pickle
 import pickle
@@ -70,11 +70,12 @@ def guess_init(model, focal_length, j2d, init_pose):
     opt_pose = ch.array(init_pose)
     (_, A_global) = global_rigid_transformation(
         opt_pose, model.J, model.kintree_table, xp=ch)
+    # Translation matrix from parent joint
     Jtr = ch.vstack([g[:3, 3] for g in A_global])
     Jtr = Jtr[smpl_ids].r
 
-    # 9 is L shoulder, 3 is L hip
-    # 8 is R shoulder, 2 is R hip
+    # idx 9 is L shoulder(smpl-16), 3 is L hip(smpl-1)
+    # 8 is R shoulder(smpl-17), 2 is R hip(smpl-2)
     diff3d = np.array([Jtr[9] - Jtr[3], Jtr[8] - Jtr[2]])
     mean_height3d = np.mean(np.sqrt(np.sum(diff3d**2, axis=1)))
 
@@ -87,13 +88,7 @@ def guess_init(model, focal_length, j2d, init_pose):
     return init_t
 
 
-def initialize_camera(model,
-                      j2d,
-                      img,
-                      init_pose,
-                      flength=5000.,
-                      pix_thsh=25.,
-                      viz=False):
+def initialize_camera(model, j2d, img, init_pose, flength=5000., pix_thsh=25., viz=False):
     """Initialize camera translation and body orientation
     :param model: SMPL model
     :param j2d: 14x2 array of CNN joints
@@ -108,44 +103,47 @@ def initialize_camera(model,
               a boolean deciding if both the optimized body orientation and its flip should be considered,
               3D vector for the body orientation
     """
+
     # optimize camera translation and body orientation based on torso joints
-    # LSP torso ids:
-    # 2=right hip, 3=left hip, 8=right shoulder, 9=left shoulder
+    # LSP(2D Joins) torso ids: 2=right hip, 3=left hip, 8=right shoulder, 9=left shoulder
     torso_cids = [2, 3, 8, 9]
     # corresponding SMPL torso ids
-    torso_smpl_ids = [2, 1, 17, 16]
+    torso_smpl_ids = [2, 1, 17, 16]     # 2=right hip, 1=left hip, 17=right shoulder, 16=left shoudler
 
     center = np.array([img.shape[1] / 2, img.shape[0] / 2])
 
     # initialize camera rotation
     rt = ch.zeros(3)
     # initialize camera translation
-    _LOGGER.info('initializing translation via similar triangles')
+    _LOGGER.info('Initializing translation via similar triangles')
     init_t = guess_init(model, flength, j2d, init_pose)
-    t = ch.array(init_t)
+    t = ch.array(init_t)        # camera translation(gamma)
 
     # check how close the shoulder joints are
     try_both_orient = np.linalg.norm(j2d[8] - j2d[9]) < pix_thsh
 
     opt_pose = ch.array(init_pose)
+    # R_theta: global rigid transformation 3*3-> rotation matrix, right (1,4): translation
     (_, A_global) = global_rigid_transformation(
-        opt_pose, model.J, model.kintree_table, xp=ch)
-    Jtr = ch.vstack([g[:3, 3] for g in A_global])
+        opt_pose, model.J, model.kintree_table, xp=ch)  # (24, 4, 4)
+    Jtr = ch.vstack([g[:3, 3] for g in A_global])       # Joint translation matrix (24, 3)
 
-    # initialize the camera
+    # initialize the camera class instance(Opendr)
     cam = ProjectPoints(
         f=np.array([flength, flength]), rt=rt, t=t, k=np.zeros(5), c=center)
 
     # we are going to project the SMPL joints
     cam.v = Jtr
+    # cam.t = init_t: camera translation(0,3)
+    # cam.v = Jtr: Joint translation matrix(24,3)
+    # cam.r = Joint Projection from 3D Joint location to 2D
 
     if viz:
         viz_img = img.copy()
 
         # draw the target (CNN) joints
         for coord in np.around(j2d).astype(int):
-            if (coord[0] < img.shape[1] and coord[0] >= 0 and
-                    coord[1] < img.shape[0] and coord[1] >= 0):
+            if 0 <= coord[0] < img.shape[1] and 0 <= coord[1] < img.shape[0]:
                 cv2.circle(viz_img, tuple(coord), 3, [0, 255, 0])
 
         import matplotlib.pyplot as plt
@@ -158,8 +156,7 @@ def initialize_camera(model,
             plt.subplot(1, 1, 1)
             viz_img = img.copy()
             for coord in np.around(cam.r[torso_smpl_ids]).astype(int):
-                if (coord[0] < viz_img.shape[1] and coord[0] >= 0 and
-                        coord[1] < viz_img.shape[0] and coord[1] >= 0):
+                if 0 <= coord[0] < viz_img.shape[1] and 0 <= coord[1] < viz_img.shape[0]:
                     cv2.circle(viz_img, tuple(coord), 3, [0, 0, 255])
             plt.imshow(viz_img[:, :, ::-1])
             plt.draw()
@@ -167,7 +164,7 @@ def initialize_camera(model,
             plt.pause(1e-3)
     else:
         on_step = None
-    # optimize for camera translation and body orientation
+    # optimize for camera translation and body orientation by chumpy: change cam value
     free_variables = [cam.t, opt_pose[:3]]
     ch.minimize(
         # data term defined over torso joints...
@@ -183,21 +180,12 @@ def initialize_camera(model,
                  'disp': 0})
     if viz:
         plt.ioff()
-    return (cam, try_both_orient, opt_pose[:3].r)
+    return cam, try_both_orient, opt_pose[:3].r
 
 
 # --------------------Core optimization --------------------
-def optimize_on_joints(j2d,
-                       model,
-                       cam,
-                       img,
-                       prior,
-                       try_both_orient,
-                       body_orient,
-                       n_betas=10,
-                       regs=None,
-                       conf=None,
-                       viz=False):
+def optimize_on_joints(j2d, model, cam, img, prior, try_both_orient, body_orient,
+                       n_betas=10, regs=None, conf=None, viz=False):
     """Fit the model to the given set of joints, given the estimated camera
     :param j2d: 14x2 array of CNN joints
     :param model: SMPL model
@@ -324,15 +312,10 @@ def optimize_on_joints(j2d,
                 for coord, target_coord in zip(
                         np.around(cam.r[smpl_ids]).astype(int),
                         np.around(j2d[cids]).astype(int)):
-                    if (coord[0] < tmp_img.shape[1] and coord[0] >= 0 and
-                            coord[1] < tmp_img.shape[0] and coord[1] >= 0):
+                    if 0 <= coord[0] < tmp_img.shape[1] and 0 <= coord[1] < tmp_img.shape[0]:
                         cv2.circle(tmp_img, tuple(coord), 3, [0, 0, 255])
-                    if (target_coord[0] < tmp_img.shape[1] and
-                            target_coord[0] >= 0 and
-                            target_coord[1] < tmp_img.shape[0] and
-                            target_coord[1] >= 0):
-                        cv2.circle(tmp_img, tuple(target_coord), 3,
-                                   [0, 255, 0])
+                    if 0 <= target_coord[0] < tmp_img.shape[1] and 0 <= target_coord[1] < tmp_img.shape[0]:
+                        cv2.circle(tmp_img, tuple(target_coord), 3, [0, 255, 0])
                 plt.imshow(tmp_img[:, :, ::-1])
                 plt.draw()
                 plt.show()
@@ -393,20 +376,11 @@ def optimize_on_joints(j2d,
         choose_id = 0
     if viz:
         plt.ioff()
-    return (svs[choose_id], cams[choose_id].r, cams[choose_id].t.r)
+    return svs[choose_id], cams[choose_id].r, cams[choose_id].t.r
 
 
-def run_single_fit(img,
-                   j2d,
-                   conf,
-                   model,
-                   regs=None,
-                   n_betas=10,
-                   flength=5000.,
-                   pix_thsh=25.,
-                   scale_factor=1,
-                   viz=False,
-                   do_degrees=None):
+def run_single_fit(img, j2d, conf, model,
+                   regs=None, n_betas=10, flength=5000., pix_thsh=25., scale_factor=1, viz=False, do_degrees=None):
     """Run the fit for one specific image.
     :param img: h x w x 3 image 
     :param j2d: 14x2 array of CNN joints
@@ -428,39 +402,41 @@ def run_single_fit(img,
 
     # create the pose prior (GMM over CMU)
     prior = MaxMixtureCompletePrior(n_gaussians=8).get_gmm_prior()
-    # get the mean pose as our initial pose
-    init_pose = np.hstack((np.zeros(3), prior.weights.dot(prior.means)))
 
+    # get the initial pose from Gaussian Mixture Model Prior (72) -> (24, 3)
+    init_pose = np.hstack((np.zeros(3), prior.weights.dot(prior.means)))        # prior.means.shape (8, 69)
+
+    # Image & Joints rescale
     if scale_factor != 1:
-        img = cv2.resize(img, (img.shape[1] * scale_factor,
-                               img.shape[0] * scale_factor))
+        img = cv2.resize(img, (img.shape[1] * scale_factor, img.shape[0] * scale_factor))
         j2d[:, 0] *= scale_factor
         j2d[:, 1] *= scale_factor
 
     # estimate the camera parameters
-    (cam, try_both_orient, body_orient) = initialize_camera(
-        model,
-        j2d,
-        img,
-        init_pose,
-        flength=flength,
-        pix_thsh=pix_thsh,
-        viz=viz)
+    cam, try_both_orient, body_orient = initialize_camera(
+        model=model,            # SMPL Gender model
+        j2d=j2d,                # (14, 2)
+        img=img,                # image
+        init_pose=init_pose,    # (72)
+        flength=flength,        # 5000
+        pix_thsh=pix_thsh,      # 25
+        viz=viz)                # true
+    # cam: 2D Joint and camera translation matrix
+    # body_orient: pose parameter[0] (3)
 
     # fit
-    (sv, opt_j2d, t) = optimize_on_joints(
-        j2d,
-        model,
-        cam,
-        img,
-        prior,
-        try_both_orient,
-        body_orient,
-        n_betas=n_betas,
-        conf=conf,
-        viz=viz,
-        regs=regs, )
-
+    sv, opt_j2d, t = optimize_on_joints(
+        j2d=j2d,                            # (14,2)
+        model=model,                        # SMPL Gender Model
+        cam=cam,                            # Camera Point(with Joint 3D, 2D projected)
+        img=img,                            # image
+        prior=prior,                        # MaxMixtureCompletePrior
+        try_both_orient=try_both_orient,    # True
+        body_orient=body_orient,            # (3, 1)
+        n_betas=n_betas,                    # 10
+        conf=conf,                          # Joint score
+        viz=viz,                            # True
+        regs=regs, )                        # gender regressor
     h = img.shape[0]
     w = img.shape[1]
     dist = np.abs(cam.t.r[2] - np.mean(sv.r, axis=0)[2])
@@ -477,26 +453,20 @@ def run_single_fit(img,
             verts = orig_v
         # now render
         im = (render_model(
-            verts, model.f, w, h, cam, far=20 + dist) * 255.).astype('uint8')
+            verts, model.f, w, h, cam, far=20 + dist, img=img) * 255.).astype('uint8')
         images.append(im)
 
     # return fit parameters
-    params = {'cam_t': cam.t.r,
-              'f': cam.f.r,
-              'pose': sv.pose.r,
-              'betas': sv.betas.r}
+    params = {'cam_t': cam.t.r,     # camera translation
+              'f': cam.f.r,         # camera focal length
+              'pose': sv.pose.r,    # pose parameter
+              'betas': sv.betas.r}  # shape parameter
 
     return params, images
 
 
-def main(base_dir,
-         out_dir,
-         use_interpenetration=True,
-         n_betas=10,
-         flength=5000.,
-         pix_thsh=25.,
-         use_neutral=False,
-         viz=True):
+def main(base_dir, out_dir,
+         use_interpenetration=True, n_betas=10, flength=5000., pix_thsh=25., use_neutral=False, viz=True):
     """Set up paths to image and joint data, saves results.
     :param base_dir: folder containing LSP images and data
     :param out_dir: output folder
@@ -510,11 +480,12 @@ def main(base_dir,
     :param viz: boolean, if True enables visualization during optimization
     """
 
+    # Define each Dirs
     img_dir = join(abspath(base_dir), 'images/lsp')
     data_dir = join(abspath(base_dir), 'results/lsp')
 
-    if not exists(out_dir):
-        makedirs(out_dir)
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
 
     # Render degrees: List of degrees in azimuth to render the final fit.
     # Note that rendering many views can take a while.
@@ -531,6 +502,7 @@ def main(base_dir,
         if use_interpenetration:
             sph_regs_male = np.load(SPH_REGS_MALE_PATH)
             sph_regs_female = np.load(SPH_REGS_FEMALE_PATH)
+        model = None
     else:
         gender = 'neutral'
         model = load_model(MODEL_NEUTRAL_PATH)
@@ -540,22 +512,24 @@ def main(base_dir,
     # Load joints
     est = np.load(join(data_dir, 'est_joints.npz'))['est_joints']
 
-    # Load images
+    # Load Data: LSP Images
     img_paths = sorted(glob(join(img_dir, '*[0-9].jpg')))
     for ind, img_path in enumerate(img_paths):
         out_path = '%s/%04d.pkl' % (out_dir, ind)
-        if not exists(out_path):
-            _LOGGER.info('Fitting 3D body on `%s` (saving to `%s`).', img_path,
-                         out_path)
+        if not os.path.exists(out_path):        # Not analyze yet
+            _LOGGER.info(f'Start fitting 3D body on `{img_path}` (saving to `{out_path}`).')
+            # Read Image
             img = cv2.imread(img_path)
             if img.ndim == 2:
-                _LOGGER.warn("The image is grayscale!")
+                _LOGGER.warning("The image is grayscale!")
                 img = np.dstack((img, img, img))
 
+            # Get DeepCut Joints & Confidence(score)
             joints = est[:2, :, ind].T
             conf = est[2, :, ind]
 
-            if not use_neutral:
+            # Get SMPL & Regressor model from Gender
+            if not use_neutral:     # Read gender result from CSV file
                 gender = 'male' if int(genders[ind]) == 0 else 'female'
                 if gender == 'female':
                     model = model_female
@@ -567,17 +541,17 @@ def main(base_dir,
                         sph_regs = sph_regs_male
 
             params, vis = run_single_fit(
-                img,
-                joints,
-                conf,
-                model,
-                regs=sph_regs,
-                n_betas=n_betas,
-                flength=flength,
-                pix_thsh=pix_thsh,
-                scale_factor=2,
-                viz=viz,
-                do_degrees=do_degrees)
+                img=img,
+                j2d=joints,
+                conf=conf,
+                model=model,                # gender model
+                regs=sph_regs,              # regressor
+                n_betas=n_betas,            # 10
+                flength=flength,            # 5000
+                pix_thsh=pix_thsh,          # 25
+                scale_factor=2,             # 2
+                viz=viz,                    # True
+                do_degrees=do_degrees)      # [0, ]
             if viz:
                 import matplotlib.pyplot as plt
                 plt.ion()
@@ -594,24 +568,25 @@ def main(base_dir,
                         plt.pause(1)
                 # raw_input('Press any key to continue...')
 
+            # Save fitting Result to pickle
             with open(out_path, 'wb') as outf:
                 pickle.dump(params, outf)
 
             # This only saves the first rendering.
             if do_degrees is not None:
                 cv2.imwrite(out_path.replace('.pkl', '.png'), vis[0])
+        else:
+            pass
+            continue
 
-
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
-
+def parse_args():
     parser = argparse.ArgumentParser(description='run SMPLify on LSP dataset')
     parser.add_argument(
         'base_dir',
         default='/scratch1/projects/smplify_public/',
         nargs='?',
         help="Directory that contains images/lsp and results/lps , i.e."
-        "the directory you untared smplify_code.tar.gz")
+             "the directory you untared smplify_code.tar.gz")
     parser.add_argument(
         '--out_dir',
         default='/tmp/smplify_lsp/',
@@ -622,13 +597,13 @@ if __name__ == '__main__':
         default=False,
         action='store_true',
         help="Using this flag removes the interpenetration term, which speeds"
-        "up optimization at the expense of possible interpenetration.")
+             "up optimization at the expense of possible interpenetration.")
     parser.add_argument(
         '--gender_neutral',
         default=False,
         action='store_true',
         help="Using this flag always uses the neutral SMPL model, otherwise "
-        "gender specified SMPL models are used.")
+             "gender specified SMPL models are used.")
     parser.add_argument(
         '--n_betas',
         default=10,
@@ -643,18 +618,29 @@ if __name__ == '__main__':
         '--side_view_thsh',
         default=25,
         type=float,
-        help="This is thresholding value that determines whether the human is captured in a side view. If the pixel distance between the shoulders is less than this value, two initializations of SMPL fits are tried.")
+        help="This is thresholding value that determines whether the human is captured in a side view. "
+             "If the pixel distance between the shoulders is less than this value, "
+             "two initializations of SMPL fits are tried.")
     parser.add_argument(
         '--viz',
         default=False,
         action='store_true',
         help="Turns on visualization of intermediate optimization steps "
-        "and final results.")
-    args = parser.parse_args()
+             "and final results.")
+    _args = parser.parse_args()
+    return _args
 
-    use_interpenetration = not args.no_interpenetration
-    if not use_interpenetration:
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+
+    args = parse_args()
+
+    # Default -> use_interpenetration
+    _use_interpenetration = not args.no_interpenetration
+    if not _use_interpenetration:
         _LOGGER.info('Not using interpenetration term.')
+    # Default -> gender_specific model
     if args.gender_neutral:
         _LOGGER.info('Using gender neutral model.')
 
@@ -662,14 +648,12 @@ if __name__ == '__main__':
     # Assumes 'models' in the 'code/' directory where this file is in.
     MODEL_DIR = join(abspath(dirname(__file__)), 'models')
     # Model paths:
-    MODEL_NEUTRAL_PATH = join(
-        MODEL_DIR, 'basicModel_neutral_lbs_10_207_0_v1.0.0.pkl')
-    MODEL_FEMALE_PATH = join(
-        MODEL_DIR, 'basicModel_f_lbs_10_207_0_v1.0.0.pkl')
-    MODEL_MALE_PATH = join(MODEL_DIR,
-                           'basicmodel_m_lbs_10_207_0_v1.0.0.pkl')
+    MODEL_NEUTRAL_PATH = join(MODEL_DIR, 'basicModel_neutral_lbs_10_207_0_v1.0.0.pkl')
+    MODEL_FEMALE_PATH = join(MODEL_DIR, 'basicModel_f_lbs_10_207_0_v1.0.0.pkl')
+    MODEL_MALE_PATH = join(MODEL_DIR,'basicmodel_m_lbs_10_207_0_v1.0.0.pkl')
 
-    if use_interpenetration:
+    # Capsule regressor model
+    if _use_interpenetration:
         # paths to the npz files storing the regressors for capsules
         SPH_REGS_NEUTRAL_PATH = join(MODEL_DIR,
                                      'regressors_locked_normalized_hybrid.npz')
@@ -678,5 +662,11 @@ if __name__ == '__main__':
         SPH_REGS_MALE_PATH = join(MODEL_DIR,
                                   'regressors_locked_normalized_male.npz')
 
-    main(args.base_dir, args.out_dir, use_interpenetration, args.n_betas,
-         args.flength, args.side_view_thsh, args.gender_neutral, args.viz)
+    main(base_dir=args.base_dir,
+         out_dir=args.out_dir,
+         use_interpenetration=_use_interpenetration,     # True/False
+         n_betas=args.n_betas,                          # 10
+         flength=args.flength,                          # 5000
+         pix_thsh=args.side_view_thsh,                  # 25
+         use_neutral=args.gender_neutral,               # False/True
+         viz=args.viz)                                  # True/False
